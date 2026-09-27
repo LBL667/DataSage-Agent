@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
 
     setup_logging()
 
-    from app.config import load_settings
+    from app.config import DATA_DIR, load_settings
     from app.errors import ConfigError
 
     try:
@@ -45,6 +45,16 @@ async def lifespan(app: FastAPI):
     except ConfigError as e:
         settings = None
         logger.warning("settings not loaded: %s", e.message)
+
+    # 事件存储，SQLite 持久化加内存广播
+    from app.observability.events import set_store
+    from app.observability.store import EventStore
+
+    store = EventStore(DATA_DIR / "events.sqlite")
+    await store.open()
+    set_store(store)
+    app.state.store = store
+    logger.info("event store loaded")
 
     # 第 3 步接入图编译，失败时降级，服务仍可启动
     try:
@@ -56,11 +66,15 @@ async def lifespan(app: FastAPI):
         graph = None
         logger.warning("graph not loaded: %s", type(e).__name__)
 
+    app.state.graph = graph
+    app.state.settings = settings
+
     yield
 
     from app.graph.build import close_graph
 
     await close_graph()
+    await store.close()
 
 
 app = FastAPI(title="DataSage Agent", lifespan=lifespan)

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from datetime import datetime, timezone
@@ -48,8 +49,28 @@ class Event(BaseModel):
     approval: ApprovalInfo | None = None
 
 
+_store: Any = None
+
+
+def set_store(store: Any) -> None:
+    """注册全局 EventStore，由 lifespan 初始化时调用。"""
+    global _store
+    _store = store
+
+
+def get_store() -> Any:
+    """返回全局 EventStore，未初始化时为 None。"""
+    return _store
+
+
 def emit(event: Event) -> None:
-    """写出事件。当前写 stdout，阶段一接 SSE，阶段十三接可观测平台。"""
+    """写出事件。有 EventStore 时调度发布，否则降级写 stdout。"""
+    if _store is not None:
+        try:
+            asyncio.get_running_loop().create_task(_store.publish(event))
+        except RuntimeError:
+            pass
+        return
     sys.stdout.write(event.model_dump_json() + "\n")
     sys.stdout.flush()
 
