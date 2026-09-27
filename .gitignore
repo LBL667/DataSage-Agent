@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# 环境变量与凭据，绝不进版本库
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Node（frontend）
+node_modules/
+dist/
+.vite/
+
+# 日志
+*.log
+
+# 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

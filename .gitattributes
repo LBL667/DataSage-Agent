@@ -1,0 +1,11 @@
+# 统一行尾为 LF，避免 Windows 上的行尾差异
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.sh text eol=lf
+
+# 锁文件标记为生成物
+uv.lock -diff linguist-generated=true
