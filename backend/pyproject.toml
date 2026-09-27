@@ -1,0 +1,55 @@
+[project]
+name = "datasage-agent"
+version = "0.1.0"
+description = "连接本地 MySQL 的数据分析 Agent，自然语言问数，全过程可审批、可追溯、可审计"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # 编排与 Agent 框架
+    "langgraph==1.2.12",
+    "langgraph-checkpoint==4.2.0",
+    "langgraph-checkpoint-sqlite==3.1.1",
+    "langchain==1.4.2",
+    "langchain-core==1.6.5",
+    "langchain-openai==1.6.6",
+    # 数据校验
+    "pydantic==2.13.5",
+    # Web 服务
+    "fastapi==0.141.1",
+    "uvicorn==0.54.0",
+    "sse-starlette==3.4.11",
+    "httpx==0.28.1",
+    # 数据库。Windows 用纯 Python 的 aiomysql，asyncmy 需 MSVC Build Tools
+    "aiomysql==0.3.2",
+    # SQL 解析。该库 MINOR 为不兼容变更，锁 patch
+    "sqlglot==30.19.0",
+    # 数据处理
+    "pandas==3.0.6",
+    "numpy==2.5.3",
+    # 配置
+    "python-dotenv==1.2.3",
+    "pyyaml==6.0.3",
+    "aiosqlite>=0.22.1",
+]
+
+[project.optional-dependencies]
+# 阶段二之后才需要的增强依赖，通过 `uv sync --extra full` 安装
+full = [
+    "scipy==1.18.1",
+    "scikit-learn==1.9.1",
+    "sqlalchemy==2.1.1",
+    "alembic==1.20.0",
+    "psycopg==3.3.6",
+    "psycopg-pool==3.3.3",
+    "langgraph-checkpoint-postgres==3.1.2",
+    "langgraph-sdk==0.4.5",
+    "langfuse==4.15.6",
+]
+
+[tool.uv]
+# 应用项目，非库
+package = false
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true

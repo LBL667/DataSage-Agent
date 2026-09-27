@@ -1,0 +1,16 @@
+# 敏感字段黑名单与语句黑名单。字段支持精确匹配与通配符。
+columns:
+  - phone
+  - id_card
+  - bank_account
+  - password
+
+column_patterns:
+  - "*_secret"
+  - "*_token"
+
+statements:
+  - INTO OUTFILE
+  - LOAD_FILE
+  - DROP TABLE
+  - TRUNCATE

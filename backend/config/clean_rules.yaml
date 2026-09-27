@@ -1,0 +1,27 @@
+# 清洗规则。模型只能从这些规则里选，不能发明。
+# 每条规则有 id、目标列、动作、参数、启用开关。
+rules:
+  - id: R1
+    target: ["*"]
+    action: drop_duplicate
+    key: [order_id]
+    enabled: true
+
+  - id: R2
+    target: [amount, price]
+    action: fill_null
+    strategy: zero
+    enabled: true
+
+  - id: R3
+    target: [created_at]
+    action: cast
+    to: datetime
+    enabled: true
+
+  - id: R4
+    target: [amount]
+    action: clip_outlier
+    method: iqr
+    factor: 3
+    enabled: true

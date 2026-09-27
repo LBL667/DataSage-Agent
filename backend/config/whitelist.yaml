@@ -1,0 +1,5 @@
+# 可访问表白名单。未列出的表一律需要审批。
+tables:
+  - orders
+  - order_items
+  - channels
