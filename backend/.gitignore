@@ -25,6 +25,8 @@ data/uploads/*
 *.db
 *.sqlite
 *.sqlite3
+*.sqlite-shm
+*.sqlite-wal
 
 # 日志
 *.log

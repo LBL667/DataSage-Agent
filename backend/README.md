@@ -55,14 +55,17 @@ uv run uvicorn app.main:app --reload
 
 ```bash
 uv run python scripts/check_readonly.py          # 验证只读通道
+uv run python scripts/check_events.py            # 验证事件流、中断恢复、超时拦截
 uv run python scripts/run_graph.py "最近三个月各渠道 GMV"   # 跑通带审批的取数
 ```
 
 ## 开发进度
 
-按《后端开发顺序》推进，当前完成第 0 到第 3 步。
+按《后端开发顺序》推进，当前完成第 0 到第 5 步。
 
 - 第 0 步 接口契约盘点，产出 `api-contract.md`
 - 第 1 步 工程骨架，FastAPI 入口、配置加载、五个面板桩端点
 - 第 2 步 凭据与只读通道，resolve_credential、只读执行、结果落盘
 - 第 3 步 状态契约与最小图，AnalysisState、三节点图、sqlite checkpointer、中断恢复
+- 第 4 步 SSE 事件流，EventStore SQLite 持久化、chat/logs 真实现、审批回传
+- 第 5 步 中间件层，节点埋点装饰器、成本熔断、超时重试
