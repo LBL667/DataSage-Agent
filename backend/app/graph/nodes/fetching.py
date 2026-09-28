@@ -21,7 +21,7 @@ from app.llm import get_structured_llm
 from app.middleware.node_wrapper import node
 from app.prompts.review import REVIEW_SYSTEM_PROMPT
 from app.prompts.sql import DEMO_SCHEMA, SQL_SYSTEM_PROMPT
-from app.tools.mysql_tool import execute_query
+from app.tools.registrar import get_registry
 from app.tools.schema_introspect import introspect_schema
 
 
@@ -153,6 +153,6 @@ async def sql_review(state: AnalysisState) -> dict:
 
 @node("readonly_exec", needs_credential=True)
 async def readonly_exec(state: AnalysisState) -> dict:
-    """只读执行，结果落盘，返回引用与元信息。"""
-    ref, meta = await execute_query(state["sql_draft"])
-    return {"result_ref": ref, "result_meta": meta}
+    """只读执行，结果落盘，返回引用与元信息。走 MCP 通道。"""
+    result = await get_registry().call("mysql_query", sql=state["sql_draft"])
+    return {"result_ref": result["result_ref"], "result_meta": result["meta"]}

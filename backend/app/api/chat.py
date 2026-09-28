@@ -30,8 +30,9 @@ class ChatRequest(BaseModel):
 
 
 class ResumeRequest(BaseModel):
-    decision: Literal["approve", "edit", "cancel"]
+    decision: Literal["approve", "edit", "cancel", "reject"] | None = None
     comment: str | None = None
+    answer: str | None = None
 
 
 async def _run_graph(graph, stream_input, config: dict, trace_id: str, session_id: str) -> None:
@@ -61,7 +62,7 @@ async def _run_graph(graph, stream_input, config: dict, trace_id: str, session_i
                                     },
                                 )
                             )
-                        else:
+                        elif "questions" in payload:
                             await emit_event(
                                 Event(
                                     trace_id=trace_id,
@@ -69,6 +70,16 @@ async def _run_graph(graph, stream_input, config: dict, trace_id: str, session_i
                                     node="clarify",
                                     event="approval_request",
                                     target={"questions": payload.get("questions", [])},
+                                )
+                            )
+                        else:
+                            await emit_event(
+                                Event(
+                                    trace_id=trace_id,
+                                    session_id=session_id,
+                                    node="human_chart_approve",
+                                    event="approval_request",
+                                    target={"chart_spec": payload.get("chart_spec")},
                                 )
                             )
                     return
@@ -139,11 +150,15 @@ async def chat(req: ChatRequest, request: Request) -> EventSourceResponse:
 
 @router.post("/{thread_id}/resume")
 async def resume(thread_id: str, req: ResumeRequest, request: Request) -> EventSourceResponse:
-    """审批回传，恢复图继续推事件。"""
+    """中断回传，恢复图继续推事件。澄清传 answer，审批与图表确认传 decision。"""
     graph = request.app.state.graph
     trace_id = new_trace_id()
     config = {"recursion_limit": 30, "configurable": {"thread_id": thread_id}}
-    cmd = Command(resume={"decision": req.decision, "comment": req.comment})
+    if req.answer is not None:
+        resume_payload = {"answer": req.answer}
+    else:
+        resume_payload = {"decision": req.decision, "comment": req.comment}
+    cmd = Command(resume=resume_payload)
     return EventSourceResponse(_stream_graph(graph, cmd, config, trace_id, thread_id))
 
 

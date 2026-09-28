@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-SQL_PROMPT_VERSION = "0.1.0"
+SQL_PROMPT_VERSION = "0.2.0"
 
 # 第 3 步演示用的表结构，第 11 步由 schema 集合召回替代
 DEMO_SCHEMA = """
@@ -35,7 +35,8 @@ SQL_SYSTEM_PROMPT = """你是数据分析 Agent 的 SQL 生成器。根据用户
 1. 只生成 SELECT，不生成任何写操作
 2. 只使用提供的表结构中的表与列
 3. 显式加上 LIMIT
-4. 时间过滤条件要明确区间
+4. 不要擅自添加时间过滤条件，除非用户明确指定了时间范围
+5. 聚合查询要对非聚合列做 GROUP BY
 
 按给定结构返回，字段为 sql、explain、tables、assumptions。
 """
