@@ -22,6 +22,7 @@ from app.middleware.node_wrapper import node
 from app.prompts.review import REVIEW_SYSTEM_PROMPT
 from app.prompts.sql import DEMO_SCHEMA, SQL_SYSTEM_PROMPT
 from app.tools.mysql_tool import execute_query
+from app.tools.schema_introspect import introspect_schema
 
 
 class SqlOutput(BaseModel):
@@ -63,19 +64,35 @@ def _sum_usage(usage_metadata: dict) -> int:
 
 @node("sql_generate")
 async def sql_generate(state: AnalysisState) -> dict:
-    """生成 SQL 与用途说明，累计 token 到 state。"""
+    """生成 SQL 与用途说明，累计 token 到 state。支持错误回灌与澄清补充。"""
     llm = get_llm(temperature=0.0)
     structured = llm.with_structured_output(SqlOutput)
+
+    schema_text = await introspect_schema() or DEMO_SCHEMA
     messages = [
         SystemMessage(content=SQL_SYSTEM_PROMPT),
-        SystemMessage(content=f"可用表结构：\n{DEMO_SCHEMA}"),
-        HumanMessage(content=state["user_goal"]),
+        SystemMessage(content=f"可用表结构：\n{schema_text}"),
     ]
+
+    errors = state.get("errors", [])
+    if errors:
+        messages.append(HumanMessage(content=f"上次 SQL 报错：{errors}\n请修正后重新生成。"))
+
+    goal = state["user_goal"]
+    if state.get("clarify_answer"):
+        goal += f"\n补充说明：{state['clarify_answer']}"
+    messages.append(HumanMessage(content=goal))
+
     with get_usage_metadata_callback() as usage_cb:
         result: SqlOutput = await structured.ainvoke(messages)
     tokens = _sum_usage(usage_cb.usage_metadata)
     used = int(state.get("token_used", 0)) + tokens
-    return {"sql_draft": result.sql, "sql_explain": result.explain, "token_used": used}
+    return {
+        "sql_draft": result.sql,
+        "sql_explain": result.explain,
+        "token_used": used,
+        "errors": [],
+    }
 
 
 @node("risk_assess")
@@ -130,7 +147,10 @@ async def sql_review(state: AnalysisState) -> dict:
         verdict: ReviewVerdict = await structured.ainvoke(messages)
     tokens = _sum_usage(usage_cb.usage_metadata)
     used = int(state.get("token_used", 0)) + tokens
-    return {"review_verdict": verdict.model_dump(), "token_used": used}
+    result: dict = {"review_verdict": verdict.model_dump(), "token_used": used}
+    if not verdict.passed:
+        result["sql_retry_count"] = int(state.get("sql_retry_count", 0)) + 1
+    return result
 
 
 @node("readonly_exec", needs_credential=True)

@@ -35,34 +35,48 @@ class ResumeRequest(BaseModel):
 
 
 async def _run_graph(graph, stream_input, config: dict, trace_id: str, session_id: str) -> None:
-    """后台跑图，构造审批请求与最终结果事件写入 EventStore。"""
+    """后台跑图，构造审批、澄清与最终结果事件写入 EventStore。"""
     result_ref = None
     result_meta = None
+    respond_text = None
     try:
         async for chunk in graph.astream(stream_input, config, stream_mode="updates"):
             for node, update in chunk.items():
                 if node == "__interrupt__":
                     for iv in update:
                         payload = iv.value or {}
-                        sql = payload.get("sql", "")
-                        await emit_event(
-                            Event(
-                                trace_id=trace_id,
-                                session_id=session_id,
-                                node="human_sql_approve",
-                                event="approval_request",
-                                input_digest=digest(sql),
-                                target={
-                                    "sql": sql,
-                                    "explain": payload.get("explain"),
-                                    "reasons": payload.get("reasons", []),
-                                },
+                        if "sql" in payload:
+                            sql = payload.get("sql", "")
+                            await emit_event(
+                                Event(
+                                    trace_id=trace_id,
+                                    session_id=session_id,
+                                    node="human_sql_approve",
+                                    event="approval_request",
+                                    input_digest=digest(sql),
+                                    target={
+                                        "sql": sql,
+                                        "explain": payload.get("explain"),
+                                        "reasons": payload.get("reasons", []),
+                                    },
+                                )
                             )
-                        )
+                        else:
+                            await emit_event(
+                                Event(
+                                    trace_id=trace_id,
+                                    session_id=session_id,
+                                    node="clarify",
+                                    event="approval_request",
+                                    target={"questions": payload.get("questions", [])},
+                                )
+                            )
                     return
                 if node == "readonly_exec":
                     result_ref = update.get("result_ref")
                     result_meta = update.get("result_meta")
+                if node == "respond":
+                    respond_text = (update.get("analysis_output") or {}).get("text")
 
         await emit_event(
             Event(
@@ -70,7 +84,11 @@ async def _run_graph(graph, stream_input, config: dict, trace_id: str, session_i
                 session_id=session_id,
                 node="respond",
                 event="final",
-                target={"result_ref": result_ref, "result_meta": result_meta},
+                target={
+                    "result_ref": result_ref,
+                    "result_meta": result_meta,
+                    "text": respond_text,
+                },
             )
         )
     except Exception:  # noqa: BLE001
@@ -109,7 +127,7 @@ async def chat(req: ChatRequest, request: Request) -> EventSourceResponse:
     graph = request.app.state.graph
     thread_id = req.thread_id or f"ss_{uuid.uuid4().hex[:8]}"
     trace_id = new_trace_id()
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {"recursion_limit": 30, "configurable": {"thread_id": thread_id}}
     initial = {
         "user_goal": req.message,
         "session_id": thread_id,
@@ -124,7 +142,7 @@ async def resume(thread_id: str, req: ResumeRequest, request: Request) -> EventS
     """审批回传，恢复图继续推事件。"""
     graph = request.app.state.graph
     trace_id = new_trace_id()
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {"recursion_limit": 30, "configurable": {"thread_id": thread_id}}
     cmd = Command(resume={"decision": req.decision, "comment": req.comment})
     return EventSourceResponse(_stream_graph(graph, cmd, config, trace_id, thread_id))
 
@@ -133,7 +151,7 @@ async def resume(thread_id: str, req: ResumeRequest, request: Request) -> EventS
 async def history(thread_id: str, request: Request) -> dict:
     """拉取会话历史消息。"""
     graph = request.app.state.graph
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {"recursion_limit": 30, "configurable": {"thread_id": thread_id}}
     try:
         snapshot = await graph.aget_state(config)
         values = snapshot.values if snapshot else {}
