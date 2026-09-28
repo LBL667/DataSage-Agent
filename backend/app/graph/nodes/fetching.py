@@ -1,11 +1,12 @@
-"""取数节点。第 3 步只做三个，SQL 生成、人工审批、只读执行。
+"""取数节点。
 
-中断节点必须独立，interrupt 放在函数第一行，因此 human_sql_approve 不套
-埋点装饰器，它的审批事件由 chat.py 的 approval_request 表示。
+sql_generate、risk_assess、human_sql_approve、sql_review、readonly_exec。
+中断节点独立，interrupt 在第一行，不套埋点装饰器。
 """
 
 from __future__ import annotations
 
+import json
 from typing import Literal
 
 from langchain_core.callbacks import get_usage_metadata_callback
@@ -13,9 +14,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.types import interrupt
 from pydantic import BaseModel
 
+from app.config import load_blacklist, load_whitelist
 from app.graph.state import AnalysisState
+from app.guard import grant_store, risk
 from app.llm import get_llm
 from app.middleware.node_wrapper import node
+from app.prompts.review import REVIEW_SYSTEM_PROMPT
 from app.prompts.sql import DEMO_SCHEMA, SQL_SYSTEM_PROMPT
 from app.tools.mysql_tool import execute_query
 
@@ -34,6 +38,14 @@ class ApprovalResult(BaseModel):
 
     decision: Literal["approve", "edit", "cancel"]
     comment: str | None = None
+
+
+class ReviewVerdict(BaseModel):
+    """审查 Agent 的结构化判定。"""
+
+    passed: bool
+    violations: list[str] = []
+    rewritten_sql: str | None = None
 
 
 def _sum_usage(usage_metadata: dict) -> int:
@@ -66,13 +78,59 @@ async def sql_generate(state: AnalysisState) -> dict:
     return {"sql_draft": result.sql, "sql_explain": result.explain, "token_used": used}
 
 
+@node("risk_assess")
+async def risk_assess(state: AnalysisState) -> dict:
+    """风险分级，静态校验加授权记忆。"""
+    sql = state.get("sql_draft") or ""
+    result = risk.assess(sql, load_whitelist(), load_blacklist())
+
+    level = result["level"]
+    tables = result["tables"]
+    reasons = result["reasons"]
+
+    # 授权记忆：仅当 high 的唯一原因是表不在白名单时，授权命中才降为 low
+    other_reasons = [r for r in reasons if not r.startswith("表不在白名单")]
+    if level == "high" and not other_reasons and grant_store.is_granted(state.get("session_id", ""), tables):
+        level = "low"
+        reasons = ["表已授权，跳过审批"] + reasons
+
+    return {
+        "sql_risk_level": level,
+        "sql_risk_reasons": reasons,
+        "sql_ast_tables": tables,
+        "sql_ast_columns": result["columns"],
+    }
+
+
 async def human_sql_approve(state: AnalysisState) -> dict:
     """高风险 SQL 的人工审批。interrupt 在第一行。"""
     result: ApprovalResult = interrupt(
-        {"sql": state["sql_draft"], "explain": state["sql_explain"]},
+        {"sql": state["sql_draft"], "explain": state["sql_explain"], "reasons": state.get("sql_risk_reasons", [])},
         response_schema=ApprovalResult,
     )
+    # 同意时写表级授权，恢复时仅执行一次，重复写无害
+    if result.decision == "approve":
+        grant_store.grant(state.get("session_id", ""), state.get("sql_ast_tables", []))
     return {"approval": {"decision": result.decision, "comment": result.comment}}
+
+
+@node("sql_review")
+async def sql_review(state: AnalysisState) -> dict:
+    """独立审查 Agent，输入只有 SQL 草稿与黑名单，不传用户诉求。"""
+    llm = get_llm(temperature=0.0)
+    structured = llm.with_structured_output(ReviewVerdict)
+    blacklist = load_blacklist()
+    messages = [
+        SystemMessage(content=REVIEW_SYSTEM_PROMPT),
+        HumanMessage(
+            content=f"黑名单配置：{json.dumps(blacklist, ensure_ascii=False)}\n\nSQL 草稿：\n{state['sql_draft']}"
+        ),
+    ]
+    with get_usage_metadata_callback() as usage_cb:
+        verdict: ReviewVerdict = await structured.ainvoke(messages)
+    tokens = _sum_usage(usage_cb.usage_metadata)
+    used = int(state.get("token_used", 0)) + tokens
+    return {"review_verdict": verdict.model_dump(), "token_used": used}
 
 
 @node("readonly_exec", needs_credential=True)

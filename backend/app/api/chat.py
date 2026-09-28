@@ -52,7 +52,11 @@ async def _run_graph(graph, stream_input, config: dict, trace_id: str, session_i
                                 node="human_sql_approve",
                                 event="approval_request",
                                 input_digest=digest(sql),
-                                target={"sql": sql, "explain": payload.get("explain")},
+                                target={
+                                    "sql": sql,
+                                    "explain": payload.get("explain"),
+                                    "reasons": payload.get("reasons", []),
+                                },
                             )
                         )
                     return
