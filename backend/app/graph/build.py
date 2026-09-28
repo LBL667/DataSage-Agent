@@ -2,7 +2,7 @@
 
 节点全是 async def，checkpointer 必须用 AsyncSqliteSaver，它在事件循环内创建。
 超时与重试用 TimeoutPolicy 与 RetryPolicy 声明式配置，不自写。
-回退回路计数写进 state，recursion_limit 显式设置。
+回退回路计数写进 state，recursion_limit 在 config 里传。
 """
 
 from __future__ import annotations
@@ -21,13 +21,22 @@ from app.graph.nodes.fetching import (
     sql_generate,
     sql_review,
 )
-from app.graph.nodes.understanding import clarify, intent_router, respond
+from app.graph.nodes.presenting import (
+    chart_advise,
+    chart_validate,
+    human_chart_approve,
+    respond,
+)
+from app.graph.nodes.processing import analyze, data_clean, quality_check, self_check
+from app.graph.nodes.understanding import clarify, intent_router
 from app.graph.state import AnalysisState
 
 _conn: aiosqlite.Connection | None = None
 
 # SQL 重写回退上限
 _SQL_RETRY_LIMIT = 2
+# 图表重生成回退上限
+_CHART_RETRY_LIMIT = 1
 
 
 def route_after_intent(state: AnalysisState) -> str:
@@ -67,10 +76,39 @@ def route_after_review(state: AnalysisState) -> str:
 
 
 def route_after_exec(state: AnalysisState) -> str:
-    """执行后分流，报错且未超限回生成纠错，否则结束。"""
-    if state.get("errors") and state.get("sql_retry_count", 0) < _SQL_RETRY_LIMIT:
+    """执行后分流，报错回生成纠错，成功进质检。"""
+    if state.get("errors"):
+        if state.get("sql_retry_count", 0) < _SQL_RETRY_LIMIT:
+            return "sql_generate"
+        return "end"
+    return "quality_check"
+
+
+def route_after_quality(state: AnalysisState) -> str:
+    """质检后分流，通过清洗，不通过回生成。"""
+    if state.get("quality_passed"):
+        return "data_clean"
+    if state.get("sql_retry_count", 0) < _SQL_RETRY_LIMIT:
         return "sql_generate"
     return "end"
+
+
+def route_after_self_check(state: AnalysisState) -> str:
+    """自检后分流，通过出图表，不通过回生成。"""
+    if state.get("self_check_passed"):
+        return "chart_advise"
+    if state.get("sql_retry_count", 0) < _SQL_RETRY_LIMIT:
+        return "sql_generate"
+    return "end"
+
+
+def route_after_chart_validate(state: AnalysisState) -> str:
+    """图表校验后分流，通过确认，不通过回图表建议，超限降级出文字。"""
+    if state.get("chart_validate_passed"):
+        return "human_chart_approve"
+    if state.get("retry_count", 0) < _CHART_RETRY_LIMIT:
+        return "chart_advise"
+    return "respond"
 
 
 def on_exec_failed(state: AnalysisState, error: NodeError) -> dict:
@@ -81,7 +119,7 @@ def on_exec_failed(state: AnalysisState, error: NodeError) -> dict:
 
 
 async def build_graph():
-    """组装取数图，AsyncSqliteSaver 持久化中断状态。Postgres 后续换。"""
+    """组装完整分析图，AsyncSqliteSaver 持久化中断状态。Postgres 后续换。"""
     global _conn
 
     builder = StateGraph(AnalysisState)
@@ -105,6 +143,13 @@ async def build_graph():
         retry_policy=RetryPolicy(max_attempts=3),
         error_handler=on_exec_failed,
     )
+    builder.add_node("quality_check", quality_check)
+    builder.add_node("data_clean", data_clean)
+    builder.add_node("analyze", analyze)
+    builder.add_node("self_check", self_check)
+    builder.add_node("chart_advise", chart_advise)
+    builder.add_node("chart_validate", chart_validate)
+    builder.add_node("human_chart_approve", human_chart_approve)
 
     builder.add_edge(START, "intent_router")
     builder.add_conditional_edges(
@@ -133,8 +178,27 @@ async def build_graph():
     builder.add_conditional_edges(
         "readonly_exec",
         route_after_exec,
-        {"sql_generate": "sql_generate", "end": END},
+        {"sql_generate": "sql_generate", "end": END, "quality_check": "quality_check"},
     )
+    builder.add_conditional_edges(
+        "quality_check",
+        route_after_quality,
+        {"data_clean": "data_clean", "sql_generate": "sql_generate", "end": END},
+    )
+    builder.add_edge("data_clean", "analyze")
+    builder.add_edge("analyze", "self_check")
+    builder.add_conditional_edges(
+        "self_check",
+        route_after_self_check,
+        {"chart_advise": "chart_advise", "sql_generate": "sql_generate", "end": END},
+    )
+    builder.add_edge("chart_advise", "chart_validate")
+    builder.add_conditional_edges(
+        "chart_validate",
+        route_after_chart_validate,
+        {"human_chart_approve": "human_chart_approve", "chart_advise": "chart_advise", "respond": "respond"},
+    )
+    builder.add_edge("human_chart_approve", "respond")
 
     checkpoint_db = DATA_DIR / "checkpoint.sqlite"
     checkpoint_db.parent.mkdir(parents=True, exist_ok=True)

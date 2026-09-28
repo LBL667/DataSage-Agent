@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from app.config import load_blacklist, load_whitelist
 from app.graph.state import AnalysisState
 from app.guard import grant_store, risk
-from app.llm import get_llm
+from app.llm import get_structured_llm
 from app.middleware.node_wrapper import node
 from app.prompts.review import REVIEW_SYSTEM_PROMPT
 from app.prompts.sql import DEMO_SCHEMA, SQL_SYSTEM_PROMPT
@@ -65,8 +65,7 @@ def _sum_usage(usage_metadata: dict) -> int:
 @node("sql_generate")
 async def sql_generate(state: AnalysisState) -> dict:
     """生成 SQL 与用途说明，累计 token 到 state。支持错误回灌与澄清补充。"""
-    llm = get_llm(temperature=0.0)
-    structured = llm.with_structured_output(SqlOutput)
+    structured = get_structured_llm(SqlOutput)
 
     schema_text = await introspect_schema() or DEMO_SCHEMA
     messages = [
@@ -134,8 +133,7 @@ async def human_sql_approve(state: AnalysisState) -> dict:
 @node("sql_review")
 async def sql_review(state: AnalysisState) -> dict:
     """独立审查 Agent，输入只有 SQL 草稿与黑名单，不传用户诉求。"""
-    llm = get_llm(temperature=0.0)
-    structured = llm.with_structured_output(ReviewVerdict)
+    structured = get_structured_llm(ReviewVerdict)
     blacklist = load_blacklist()
     messages = [
         SystemMessage(content=REVIEW_SYSTEM_PROMPT),

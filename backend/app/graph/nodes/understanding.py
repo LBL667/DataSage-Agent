@@ -12,7 +12,7 @@ from langgraph.types import interrupt
 from pydantic import BaseModel
 
 from app.graph.state import AnalysisState
-from app.llm import get_llm
+from app.llm import get_structured_llm
 from app.middleware.node_wrapper import node
 from app.prompts.intent import INTENT_SYSTEM_PROMPT
 
@@ -35,8 +35,7 @@ class ClarifyAnswer(BaseModel):
 @node("intent_router")
 async def intent_router(state: AnalysisState) -> dict:
     """判定意图三类并评估信息充分度。"""
-    llm = get_llm(temperature=0.0)
-    structured = llm.with_structured_output(IntentOutput)
+    structured = get_structured_llm(IntentOutput)
     messages = [
         SystemMessage(content=INTENT_SYSTEM_PROMPT),
         HumanMessage(content=state["user_goal"]),
@@ -55,11 +54,3 @@ async def clarify(state: AnalysisState) -> dict:
     questions = state.get("clarify_questions", [])
     answer: ClarifyAnswer = interrupt({"questions": questions}, response_schema=ClarifyAnswer)
     return {"clarify_answer": answer.answer}
-
-
-@node("respond")
-async def respond(state: AnalysisState) -> dict:
-    """闲聊类的简单文字答复。第 9 步替换为完整洞察输出。"""
-    llm = get_llm(temperature=0.5)
-    result = await llm.ainvoke([HumanMessage(content=state["user_goal"])])
-    return {"analysis_output": {"text": result.content}}
