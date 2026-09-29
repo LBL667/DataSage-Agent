@@ -66,7 +66,11 @@ export default function ChatPanel() {
       setRunning(false)
     } else if (ev.event === 'final') {
       const text = (ev.target as { text?: string } | undefined)?.text || ''
-      update([...session.messages, { role: 'assistant', content: text }])
+      setSession((prev) => {
+        const next = { ...prev, messages: [...prev.messages, { role: 'assistant' as const, content: text }] }
+        saveCurrent(next)
+        return next
+      })
       setRunning(false)
       setProgress('')
     } else if (ev.event === 'error') {
@@ -79,8 +83,12 @@ export default function ChatPanel() {
     const text = input.trim()
     if (!text || running) return
     setInput('')
-    const messages = [...session.messages, { role: 'user' as const, content: text }]
-    update(messages)
+    const userMsg = { role: 'user' as const, content: text }
+    setSession((prev) => {
+      const next = { ...prev, messages: [...prev.messages, userMsg] }
+      saveCurrent(next)
+      return next
+    })
     // 首次发送用输入作为标题
     if (session.title === '新会话' && session.messages.length === 0) {
       const title = text.slice(0, 16)
