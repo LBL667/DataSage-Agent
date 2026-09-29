@@ -66,6 +66,15 @@ async def lifespan(app: FastAPI):
         graph = None
         logger.warning("graph not loaded: %s", type(e).__name__)
 
+    # 第 11 步入库 schema 集合，失败不阻断服务
+    try:
+        from app.rag.ingest import ingest_schema
+
+        count = await ingest_schema()
+        logger.info("schema 入库 %d 个 chunk", count)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("schema 入库失败: %s", type(e).__name__)
+
     app.state.graph = graph
     app.state.settings = settings
 

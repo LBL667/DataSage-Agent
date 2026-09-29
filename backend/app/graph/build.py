@@ -28,7 +28,13 @@ from app.graph.nodes.presenting import (
     respond,
 )
 from app.graph.nodes.processing import analyze, data_clean, quality_check, self_check
-from app.graph.nodes.understanding import clarify, intent_router
+from app.graph.nodes.understanding import (
+    clarify,
+    intent_router,
+    memory_compact,
+    rag_retrieve,
+    semantic_cache,
+)
 from app.graph.state import AnalysisState
 
 _conn: aiosqlite.Connection | None = None
@@ -39,12 +45,19 @@ _SQL_RETRY_LIMIT = 2
 _CHART_RETRY_LIMIT = 1
 
 
+def route_after_cache(state: AnalysisState) -> str:
+    """语义缓存命中直接回放，未命中走全流程。"""
+    if state.get("rag_cache_hit"):
+        return "respond"
+    return "intent_router"
+
+
 def route_after_intent(state: AnalysisState) -> str:
     """意图分流，闲聊答复，取数按信息充分度决定是否澄清。"""
     if state.get("intent") == "chat":
         return "respond"
     if state.get("info_sufficient"):
-        return "sql_generate"
+        return "rag_retrieve"
     return "clarify"
 
 
@@ -124,8 +137,11 @@ async def build_graph():
 
     builder = StateGraph(AnalysisState)
 
+    builder.add_node("memory_compact", memory_compact)
+    builder.add_node("semantic_cache", semantic_cache)
     builder.add_node("intent_router", intent_router)
     builder.add_node("clarify", clarify)
+    builder.add_node("rag_retrieve", rag_retrieve)
     builder.add_node("respond", respond)
     builder.add_node(
         "sql_generate",
@@ -151,13 +167,20 @@ async def build_graph():
     builder.add_node("chart_validate", chart_validate)
     builder.add_node("human_chart_approve", human_chart_approve)
 
-    builder.add_edge(START, "intent_router")
+    builder.add_edge(START, "memory_compact")
+    builder.add_edge("memory_compact", "semantic_cache")
+    builder.add_conditional_edges(
+        "semantic_cache",
+        route_after_cache,
+        {"respond": "respond", "intent_router": "intent_router"},
+    )
     builder.add_conditional_edges(
         "intent_router",
         route_after_intent,
-        {"respond": "respond", "sql_generate": "sql_generate", "clarify": "clarify"},
+        {"respond": "respond", "rag_retrieve": "rag_retrieve", "clarify": "clarify"},
     )
-    builder.add_edge("clarify", "sql_generate")
+    builder.add_edge("clarify", "rag_retrieve")
+    builder.add_edge("rag_retrieve", "sql_generate")
     builder.add_edge("respond", END)
     builder.add_edge("sql_generate", "risk_assess")
     builder.add_conditional_edges(

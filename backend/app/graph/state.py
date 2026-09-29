@@ -26,6 +26,7 @@ class AnalysisState(TypedDict):
     clarify_questions: list[str]
     clarify_answer: str | None
     parent_result_ref: str | None
+    summary: str | None
 
     # 检索上下文
     schema_context: list[str]
