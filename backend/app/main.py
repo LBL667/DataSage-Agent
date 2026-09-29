@@ -11,9 +11,10 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import chat, config, dashboard, logs, rag, status
+from app.api import auth, chat, config, dashboard, logs, rag, status
 from app.errors import AppError
 from app.observability.logging import (
     get_logger,
@@ -56,6 +57,14 @@ async def lifespan(app: FastAPI):
     app.state.store = store
     logger.info("event store loaded")
 
+    # 用户存储，种子 admin 用户
+    from app.storage.user_store import UserStore
+
+    user_store = UserStore(DATA_DIR / "users.sqlite")
+    await user_store.open()
+    app.state.user_store = user_store
+    logger.info("user store loaded")
+
     # 第 3 步接入图编译，失败时降级，服务仍可启动
     try:
         from app.graph.build import build_graph
@@ -84,9 +93,19 @@ async def lifespan(app: FastAPI):
 
     await close_graph()
     await store.close()
+    await user_store.close()
 
 
 app = FastAPI(title="DataSage Agent", lifespan=lifespan)
+
+# 前端开发期跨域，允许 Vite 默认端口
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.middleware("http")
@@ -124,6 +143,7 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
     )
 
 
+app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(config.router)
 app.include_router(dashboard.router)
