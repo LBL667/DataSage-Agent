@@ -47,8 +47,10 @@ def probe(df: pd.DataFrame) -> dict:
                 gaps = dates.diff().dropna()
                 median_gap = gaps.median()
                 max_gap = gaps.max()
-                # 最大间隔超过中位数 3 倍视为断点，除零防御
-                if median_gap.total_seconds() > 0 and max_gap > median_gap * 3:
+                # 只对密集时间序列检测断点，随机日期的订单明细不适用，避免误报
+                if median_gap > pd.Timedelta(days=2):
+                    checks.append({"check": "日期连续性", "passed": True, "detail": "非密集时间序列，跳过"})
+                elif max_gap > median_gap * 3:
                     checks.append({"check": "日期连续性", "passed": False, "detail": f"疑似断点，最大间隔 {max_gap}"})
                     passed = False
                 else:

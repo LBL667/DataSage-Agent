@@ -48,9 +48,17 @@ async def quality_check(state: AnalysisState) -> dict:
         return {
             "quality_passed": False,
             "quality_report": {"passed": False, "checks": [{"check": "结果引用", "passed": False, "detail": "无结果"}]},
+            "sql_retry_count": int(state.get("sql_retry_count", 0)) + 1,
         }
     report = await get_registry().call("quality_probe", data_ref=ref)
-    return {"quality_passed": report["passed"], "quality_report": report}
+    if not report["passed"]:
+        # 质检不通过，递增重试计数，避免无限回退
+        return {
+            "quality_passed": False,
+            "quality_report": report,
+            "sql_retry_count": int(state.get("sql_retry_count", 0)) + 1,
+        }
+    return {"quality_passed": True, "quality_report": report}
 
 
 @node("data_clean")
