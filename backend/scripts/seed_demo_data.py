@@ -1,19 +1,23 @@
-"""在 datasage_db 建演示表并插入数据。
+"""在 datasage_db 建演示表并插入 100 条多维度数据。
 
-幂等，可重复运行。orders 20 条，order_items 若干，channels 3 条。
+幂等，可重复运行。orders 100 条，含渠道、地区、品类、金额、利润、数量、
+状态、时间七个维度，够做柱状图、折线图、环形图。order_items 约 200 条。
+
+写权限账号用环境变量覆盖，默认读 .env 的 DB 账号。
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
+import random
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import aiomysql  # noqa: E402
-
-from app.middleware.credential import resolve_credential  # noqa: E402
 
 DROP_SQL = """
 DROP TABLE IF EXISTS order_items;
@@ -30,98 +34,122 @@ CREATE TABLE channels (
 CREATE TABLE orders (
     order_id INT PRIMARY KEY COMMENT '订单号',
     user_id INT NOT NULL COMMENT '用户 id',
-    channel VARCHAR(50) NOT NULL COMMENT '渠道',
-    amount DECIMAL(10,2) NOT NULL COMMENT '金额',
+    channel VARCHAR(20) NOT NULL COMMENT '渠道',
+    region VARCHAR(20) NOT NULL COMMENT '地区',
+    category VARCHAR(20) NOT NULL COMMENT '品类',
+    amount DECIMAL(12,2) NOT NULL COMMENT '金额',
+    profit DECIMAL(12,2) NOT NULL COMMENT '利润',
+    quantity INT NOT NULL COMMENT '数量',
+    status VARCHAR(20) NOT NULL COMMENT '状态',
     created_at DATE NOT NULL COMMENT '下单时间'
 ) COMMENT='订单表';
 
 CREATE TABLE order_items (
     item_id INT PRIMARY KEY COMMENT '明细 id',
     order_id INT NOT NULL COMMENT '所属订单',
-    product_id INT NOT NULL COMMENT '商品 id',
+    product_name VARCHAR(50) NOT NULL COMMENT '商品名',
     quantity INT NOT NULL COMMENT '数量',
     price DECIMAL(10,2) NOT NULL COMMENT '单价'
 ) COMMENT='订单明细';
 """
 
-# channels 3 条
 CHANNELS = [
     (1, "华东"),
     (2, "华南"),
     (3, "华北"),
+    (4, "西南"),
+    (5, "东北"),
 ]
 
-# orders 20 条，覆盖三个渠道与最近三个月
-ORDERS = [
-    (101, 1001, "华东", 128.00, "2026-06-02"),
-    (102, 1002, "华南", 256.50, "2026-06-11"),
-    (103, 1003, "华北", 89.90, "2026-06-18"),
-    (104, 1004, "华东", 399.00, "2026-06-25"),
-    (105, 1005, "华南", 178.20, "2026-07-03"),
-    (106, 1006, "华东", 45.00, "2026-07-09"),
-    (107, 1007, "华北", 512.80, "2026-07-15"),
-    (108, 1008, "华南", 66.60, "2026-07-22"),
-    (109, 1009, "华东", 233.30, "2026-07-29"),
-    (110, 1010, "华北", 98.00, "2026-08-04"),
-    (111, 1011, "华东", 320.50, "2026-08-12"),
-    (112, 1012, "华南", 150.00, "2026-08-19"),
-    (113, 1013, "华北", 275.40, "2026-08-26"),
-    (114, 1014, "华东", 410.20, "2026-09-02"),
-    (115, 1015, "华南", 88.80, "2026-09-08"),
-    (116, 1016, "华东", 190.00, "2026-09-14"),
-    (117, 1017, "华北", 350.60, "2026-09-18"),
-    (118, 1018, "华东", 120.90, "2026-09-22"),
-    (119, 1019, "华南", 460.00, "2026-09-25"),
-    (120, 1020, "华北", 205.30, "2026-09-27"),
-]
+CATEGORIES = ["数码", "家电", "服饰", "食品", "美妆"]
 
-# order_items 若干条，关联 orders
-ORDER_ITEMS = [
-    (1001, 101, 2001, 2, 64.00),
-    (1002, 102, 2002, 1, 256.50),
-    (1003, 103, 2003, 3, 29.97),
-    (1004, 104, 2004, 1, 399.00),
-    (1005, 105, 2005, 2, 89.10),
-    (1006, 106, 2006, 1, 45.00),
-    (1007, 107, 2007, 4, 128.20),
-    (1008, 108, 2008, 2, 33.30),
-    (1009, 109, 2009, 1, 233.30),
-    (1010, 110, 2010, 2, 49.00),
-    (1011, 111, 2011, 1, 320.50),
-    (1012, 112, 2012, 3, 50.00),
-]
+REGIONS = ["华东", "华南", "华北", "西南", "东北"]
+
+STATUSES = [("已完成", 8), ("待发货", 1), ("已取消", 1)]
+
+PRODUCTS = {
+    "数码": ["手机", "耳机", "平板", "充电器", "键盘"],
+    "家电": ["冰箱", "洗衣机", "空调", "微波炉", "电饭煲"],
+    "服饰": ["T恤", "牛仔裤", "卫衣", "夹克", "运动鞋"],
+    "食品": ["坚果", "咖啡", "茶叶", "饼干", "巧克力"],
+    "美妆": ["口红", "面霜", "面膜", "精华", "眼影"],
+}
+
+
+def gen_orders(n: int = 100) -> list[tuple]:
+    rng = random.Random(42)
+    rows = []
+    start = date(2026, 3, 1)
+    end = date(2026, 9, 30)
+    span = (end - start).days
+
+    for i in range(1, n + 1):
+        channel = rng.choice(REGIONS)
+        region = rng.choice(REGIONS)
+        category = rng.choice(CATEGORIES)
+        base = rng.uniform(100, 3000)
+        quantity = rng.randint(1, 6)
+        amount = round(base * quantity, 2)
+        margin = rng.uniform(0.10, 0.40)
+        profit = round(amount * margin, 2)
+        status = rng.choices([s for s, _ in STATUSES], weights=[w for _, w in STATUSES])[0]
+        created_at = start + timedelta(days=rng.randint(0, span))
+        rows.append(
+            (i, rng.randint(1001, 1200), channel, region, category, amount, profit, quantity, status, created_at)
+        )
+    return rows
+
+
+def gen_items(orders: list[tuple]) -> list[tuple]:
+    rng = random.Random(7)
+    rows = []
+    item_id = 1
+    for order in orders:
+        order_id = order[0]
+        category = order[4]
+        products = PRODUCTS[category]
+        n_items = rng.randint(1, 3)
+        for _ in range(n_items):
+            product = rng.choice(products)
+            qty = rng.randint(1, 3)
+            price = round(rng.uniform(20, 1500), 2)
+            rows.append((item_id, order_id, product, qty, price))
+            item_id += 1
+    return rows
 
 
 async def main() -> None:
-    cred = resolve_credential("single")
-    print(f"连接 {cred.user}@{cred.host}:{cred.port}/{cred.database}")
+    user = os.environ.get("SEED_DB_USER") or os.environ.get("DB_USER", "root")
+    password = os.environ.get("SEED_DB_PASSWORD") or os.environ.get("DB_PASSWORD", "")
+    host = os.environ.get("DB_HOST", "127.0.0.1")
+    port = int(os.environ.get("DB_PORT", "3306"))
+    db = os.environ.get("DB_NAME", "datasage_db")
 
-    conn = await aiomysql.connect(
-        host=cred.host, port=cred.port, user=cred.user,
-        password=cred.password, db=cred.database, autocommit=True,
-    )
+    print(f"连接 {user}@{host}:{port}/{db}")
+
+    conn = await aiomysql.connect(host=host, port=port, user=user, password=password, db=db, autocommit=False)
     try:
         cur = await conn.cursor()
-        for stmt in DROP_SQL.strip().split(";"):
-            if stmt.strip():
-                await cur.execute(stmt)
-        for stmt in CREATE_SQL.strip().split(";"):
-            if stmt.strip():
-                await cur.execute(stmt)
-        await cur.executemany("INSERT INTO channels VALUES (%s, %s)", CHANNELS)
+        await cur.execute(DROP_SQL)
+        await cur.execute(CREATE_SQL)
+
+        orders = gen_orders(100)
+        items = gen_items(orders)
+
+        await cur.executemany("INSERT INTO channels (channel_id, channel_name) VALUES (%s, %s)", CHANNELS)
         await cur.executemany(
-            "INSERT INTO orders (order_id, user_id, channel, amount, created_at) VALUES (%s, %s, %s, %s, %s)",
-            ORDERS,
+            "INSERT INTO orders (order_id, user_id, channel, region, category, amount, profit, quantity, status, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            orders,
         )
         await cur.executemany(
-            "INSERT INTO order_items (item_id, order_id, product_id, quantity, price) VALUES (%s, %s, %s, %s, %s)",
-            ORDER_ITEMS,
+            "INSERT INTO order_items (item_id, order_id, product_name, quantity, price) VALUES (%s, %s, %s, %s, %s)",
+            items,
         )
-        await cur.close()
+        await conn.commit()
+        print(f"完成：channels {len(CHANNELS)} 条，orders {len(orders)} 条，order_items {len(items)} 条")
     finally:
         conn.close()
-
-    print(f"完成：channels {len(CHANNELS)} 条，orders {len(ORDERS)} 条，order_items {len(ORDER_ITEMS)} 条")
 
 
 if __name__ == "__main__":
