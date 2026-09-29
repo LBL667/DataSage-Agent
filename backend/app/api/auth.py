@@ -16,9 +16,24 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    nickname: str = ""
+
+
 class ResetRequest(BaseModel):
     username: str
     new_password: str
+
+
+@router.post("/register")
+async def register(req: RegisterRequest, request: Request) -> dict:
+    store = request.app.state.user_store
+    user = await store.create_user(req.username, req.password, req.nickname)
+    if user is None:
+        return {"ok": False, "message": "用户名已存在"}
+    return {"ok": True, "user": user}
 
 
 @router.post("/login")

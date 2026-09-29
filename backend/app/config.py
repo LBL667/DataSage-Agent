@@ -102,3 +102,33 @@ def load_clean_rules() -> list[dict]:
     """读取清洗规则。"""
     data = load_yaml("clean_rules.yaml")
     return list(data.get("rules", []))
+
+
+def save_yaml(name: str, data: dict) -> None:
+    """写回 config 目录下的 yaml 配置。"""
+    path = CONFIG_DIR / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+
+
+def save_env(updates: dict[str, str]) -> None:
+    """更新 .env 指定键，保留其他行。值为 None 的键跳过。"""
+    env_path = BASE_DIR / ".env"
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    updated: set[str] = set()
+    out: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        key = ""
+        if "=" in stripped and not stripped.startswith("#"):
+            key = stripped.split("=", 1)[0].strip()
+        if key in updates and updates[key] is not None:
+            out.append(f"{key}={updates[key]}")
+            updated.add(key)
+        else:
+            out.append(line)
+    for key, value in updates.items():
+        if key not in updated and value is not None:
+            out.append(f"{key}={value}")
+    env_path.write_text("\n".join(out) + "\n", encoding="utf-8")

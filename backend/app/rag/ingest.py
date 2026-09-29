@@ -197,3 +197,90 @@ async def load_chunks(collection: str) -> list[dict]:
             }
         )
     return chunks
+
+
+async def ingest_document(name: str, collection: str, content: str) -> int:
+    """上传文档入库，按段落切分，向量化写入。返回 chunk 数。"""
+    import aiosqlite
+
+    paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+    if not paragraphs:
+        paragraphs = [content.strip() or name]
+
+    embeddings = await embedding.embed(paragraphs)
+
+    db = RAG_DB
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = await aiosqlite.connect(str(db))
+    try:
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS chunks ("
+            "id TEXT PRIMARY KEY, collection TEXT, content TEXT, keyword_text TEXT, "
+            "embedding TEXT, metadata TEXT, created_at TEXT)"
+        )
+        for i, (para, vec) in enumerate(zip(paragraphs, embeddings)):
+            await conn.execute(
+                "INSERT OR REPLACE INTO chunks (id, collection, content, keyword_text, embedding, metadata, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+                (
+                    f"{collection}::{name}::{i}",
+                    collection,
+                    para,
+                    para,
+                    json.dumps(vec),
+                    json.dumps({"doc": name}, ensure_ascii=False),
+                ),
+            )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+    logger.info("文档 %s 入库 %d 个 chunk", name, len(paragraphs))
+    return len(paragraphs)
+
+
+async def list_documents() -> list[dict]:
+    """列出所有文档，按集合与文档名聚合。"""
+    import aiosqlite
+
+    db = RAG_DB
+    if not db.exists():
+        return []
+
+    conn = await aiosqlite.connect(str(db))
+    try:
+        cur = await conn.execute(
+            "SELECT collection, metadata, COUNT(*) FROM chunks GROUP BY collection, metadata"
+        )
+        rows = await cur.fetchall()
+    finally:
+        await conn.close()
+
+    docs = []
+    for collection, metadata_text, count in rows:
+        meta = json.loads(metadata_text) if metadata_text else {}
+        name = meta.get("doc", "")
+        if not name:
+            continue
+        docs.append({"name": name, "collection": collection, "chunks": count})
+    return docs
+
+
+async def delete_document(name: str, collection: str) -> bool:
+    """删除某个文档的所有 chunk。"""
+    import aiosqlite
+
+    db = RAG_DB
+    if not db.exists():
+        return False
+
+    conn = await aiosqlite.connect(str(db))
+    try:
+        cur = await conn.execute(
+            "DELETE FROM chunks WHERE collection = ? AND id LIKE ?",
+            (collection, f"{collection}::{name}::%"),
+        )
+        await conn.commit()
+        return cur.rowcount > 0
+    finally:
+        await conn.close()

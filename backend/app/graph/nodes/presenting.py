@@ -34,6 +34,7 @@ CHART_SYSTEM_PROMPT = """你是图表建议器。根据分析结果与结果列�
 
 图表类型只给五种：line 折线、bar 柱状、scatter 散点、pie 饼图、table 表格。
 x_field 与 y_field 必须是结果列名，series 可选。
+description 用一句中文说明这个图表展示什么，例如「用柱状图对比各渠道的订单金额，横轴是渠道，纵轴是金额」。
 """
 
 

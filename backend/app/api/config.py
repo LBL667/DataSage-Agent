@@ -1,23 +1,42 @@
-"""配置面板接口。读取静态 yaml 配置，凭据只读 .env 不在此暴露。"""
+"""配置面板接口。真读写 .env 与 yaml 配置。
+
+数据库凭据只在此读写 .env，GET 不返回密码。
+"""
 
 from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.config import load_blacklist, load_clean_rules, load_whitelist
+from app.config import (
+    load_blacklist,
+    load_clean_rules,
+    load_settings,
+    load_whitelist,
+    save_env,
+    save_yaml,
+)
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
 
 @router.get("/db")
 async def db_status() -> dict:
-    # 方案 A 下不返回密码，只返回连接状态与目标库名
-    return {"status": "unknown", "host": "127.0.0.1", "database": "", "user": "agent_ro"}
+    s = load_settings()
+    return {"host": s.db_host, "port": s.db_port, "user": s.db_user, "database": s.db_name}
 
 
-@router.post("/db/test")
-async def db_test() -> dict:
-    return {"ok": False, "message": "第 2 步实现真实连接测试"}
+@router.put("/db")
+async def put_db(payload: dict) -> dict:
+    save_env(
+        {
+            "DB_HOST": payload.get("host"),
+            "DB_PORT": str(payload["port"]) if payload.get("port") else None,
+            "DB_USER": payload.get("user"),
+            "DB_PASSWORD": payload.get("password") or None,
+            "DB_NAME": payload.get("database"),
+        }
+    )
+    return {"ok": True}
 
 
 @router.get("/whitelist")
@@ -27,8 +46,9 @@ async def get_whitelist() -> dict:
 
 @router.put("/whitelist")
 async def put_whitelist(payload: dict) -> dict:
-    # 第 7 步实现写回 yaml
-    return {"tables": payload.get("tables", [])}
+    tables = list(payload.get("tables", []))
+    save_yaml("whitelist.yaml", {"tables": tables})
+    return {"tables": tables}
 
 
 @router.get("/blacklist")
@@ -38,7 +58,13 @@ async def get_blacklist() -> dict:
 
 @router.put("/blacklist")
 async def put_blacklist(payload: dict) -> dict:
-    return payload
+    data = {
+        "columns": list(payload.get("columns", [])),
+        "column_patterns": list(payload.get("column_patterns", [])),
+        "statements": list(payload.get("statements", [])),
+    }
+    save_yaml("blacklist.yaml", data)
+    return data
 
 
 @router.get("/clean-rules")
@@ -46,26 +72,26 @@ async def get_clean_rules() -> dict:
     return {"rules": load_clean_rules()}
 
 
-@router.post("/clean-rules")
-async def create_clean_rule(payload: dict) -> dict:
-    return {"rule_id": "R_new", **payload}
-
-
-@router.put("/clean-rules/{rule_id}")
-async def update_clean_rule(rule_id: str, payload: dict) -> dict:
-    return {"rule_id": rule_id, **payload}
-
-
-@router.delete("/clean-rules/{rule_id}")
-async def delete_clean_rule(rule_id: str) -> dict:
-    return {"ok": True}
+@router.put("/clean-rules")
+async def put_clean_rules(payload: dict) -> dict:
+    rules = list(payload.get("rules", []))
+    save_yaml("clean_rules.yaml", {"rules": rules})
+    return {"rules": rules}
 
 
 @router.get("/thresholds")
 async def get_thresholds() -> dict:
-    return {"max_scan_rows": 100000, "sql_timeout_s": 10, "grant_ttl_s": 1800}
+    s = load_settings()
+    return {"max_scan_rows": s.max_scan_rows, "sql_timeout_s": s.sql_timeout_s, "grant_ttl_s": s.grant_ttl_s}
 
 
 @router.put("/thresholds")
 async def put_thresholds(payload: dict) -> dict:
+    save_env(
+        {
+            "MAX_SCAN_ROWS": str(payload["max_scan_rows"]) if payload.get("max_scan_rows") else None,
+            "SQL_TIMEOUT_S": str(payload["sql_timeout_s"]) if payload.get("sql_timeout_s") else None,
+            "GRANT_TTL_S": str(payload["grant_ttl_s"]) if payload.get("grant_ttl_s") else None,
+        }
+    )
     return payload

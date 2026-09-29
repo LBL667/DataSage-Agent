@@ -21,6 +21,12 @@ async def list_results() -> dict:
     return {"results": _dashboard.list()}
 
 
+@router.delete("/results")
+async def clear_results() -> dict:
+    count = _dashboard.clear()
+    return {"ok": True, "deleted": count}
+
+
 @router.get("/results/{result_id}")
 async def get_result(result_id: str) -> dict:
     result = _dashboard.get(result_id)

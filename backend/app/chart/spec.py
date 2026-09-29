@@ -17,3 +17,4 @@ class ChartSpec(BaseModel):
     y_field: str
     series: str | None = None
     title: str = ""
+    description: str = ""

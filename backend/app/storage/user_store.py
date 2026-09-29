@@ -95,3 +95,15 @@ class UserStore:
             "avatar": row[3],
             "email": row[4],
         }
+
+    async def create_user(self, username: str, password: str, nickname: str = "") -> dict | None:
+        """注册用户，用户名已存在返回 None。"""
+        try:
+            await self._conn.execute(
+                "INSERT INTO users (username, password_hash, nickname, avatar, email) VALUES (?, ?, ?, '', '')",
+                (username, hash_password(password), nickname or username),
+            )
+            await self._conn.commit()
+        except aiosqlite.IntegrityError:
+            return None
+        return await self.get_user(username)

@@ -38,3 +38,11 @@ class DashboardStore:
         if not path.exists():
             return None
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def clear(self) -> int:
+        """清空所有结果，返回删除数量。"""
+        count = 0
+        for f in self.store_dir.glob("*.json"):
+            f.unlink()
+            count += 1
+        return count
