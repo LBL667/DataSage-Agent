@@ -2,6 +2,7 @@
 
 节点全是 async def，checkpointer 必须用 AsyncSqliteSaver，它在事件循环内创建。
 超时与重试用 TimeoutPolicy 与 RetryPolicy 声明式配置，不自写。
+回退回路计数写进 state，recursion_limit 显式设置。
 """
 
 from __future__ import annotations
@@ -20,9 +21,22 @@ from app.graph.nodes.fetching import (
     sql_generate,
     sql_review,
 )
+from app.graph.nodes.understanding import clarify, intent_router, respond
 from app.graph.state import AnalysisState
 
 _conn: aiosqlite.Connection | None = None
+
+# SQL 重写回退上限
+_SQL_RETRY_LIMIT = 2
+
+
+def route_after_intent(state: AnalysisState) -> str:
+    """意图分流，闲聊答复，取数按信息充分度决定是否澄清。"""
+    if state.get("intent") == "chat":
+        return "respond"
+    if state.get("info_sufficient"):
+        return "sql_generate"
+    return "clarify"
 
 
 def route_after_risk(state: AnalysisState) -> str:
@@ -43,17 +57,27 @@ def route_after_approve(state: AnalysisState) -> str:
 
 
 def route_after_review(state: AnalysisState) -> str:
-    """审查后分流，通过执行，不通过回生成。"""
+    """审查后分流，通过执行，不通过回生成，超限结束。"""
     verdict = state.get("review_verdict") or {}
     if verdict.get("passed"):
         return "readonly_exec"
-    return "sql_generate"
+    if state.get("sql_retry_count", 0) < _SQL_RETRY_LIMIT:
+        return "sql_generate"
+    return "end"
+
+
+def route_after_exec(state: AnalysisState) -> str:
+    """执行后分流，报错且未超限回生成纠错，否则结束。"""
+    if state.get("errors") and state.get("sql_retry_count", 0) < _SQL_RETRY_LIMIT:
+        return "sql_generate"
+    return "end"
 
 
 def on_exec_failed(state: AnalysisState, error: NodeError) -> dict:
-    """只读执行失败后的补偿，记录错误，图结束。第 7 步改为纠错回路。"""
+    """只读执行失败后的补偿，记录错误并计数。"""
     errors = list(state.get("errors", [])) + [f"{error.node}:{type(error.error).__name__}"]
-    return {"errors": errors}
+    sql_retry_count = int(state.get("sql_retry_count", 0)) + 1
+    return {"errors": errors, "sql_retry_count": sql_retry_count}
 
 
 async def build_graph():
@@ -62,6 +86,9 @@ async def build_graph():
 
     builder = StateGraph(AnalysisState)
 
+    builder.add_node("intent_router", intent_router)
+    builder.add_node("clarify", clarify)
+    builder.add_node("respond", respond)
     builder.add_node(
         "sql_generate",
         sql_generate,
@@ -79,7 +106,14 @@ async def build_graph():
         error_handler=on_exec_failed,
     )
 
-    builder.add_edge(START, "sql_generate")
+    builder.add_edge(START, "intent_router")
+    builder.add_conditional_edges(
+        "intent_router",
+        route_after_intent,
+        {"respond": "respond", "sql_generate": "sql_generate", "clarify": "clarify"},
+    )
+    builder.add_edge("clarify", "sql_generate")
+    builder.add_edge("respond", END)
     builder.add_edge("sql_generate", "risk_assess")
     builder.add_conditional_edges(
         "risk_assess",
@@ -94,9 +128,13 @@ async def build_graph():
     builder.add_conditional_edges(
         "sql_review",
         route_after_review,
-        {"readonly_exec": "readonly_exec", "sql_generate": "sql_generate"},
+        {"readonly_exec": "readonly_exec", "sql_generate": "sql_generate", "end": END},
     )
-    builder.add_edge("readonly_exec", END)
+    builder.add_conditional_edges(
+        "readonly_exec",
+        route_after_exec,
+        {"sql_generate": "sql_generate", "end": END},
+    )
 
     checkpoint_db = DATA_DIR / "checkpoint.sqlite"
     checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
