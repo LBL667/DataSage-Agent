@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.api import chat, config, dashboard, logs, rag
+from app.api import chat, config, dashboard, logs, rag, status
 from app.errors import AppError
 from app.observability.logging import (
     get_logger,
@@ -129,6 +129,7 @@ app.include_router(config.router)
 app.include_router(dashboard.router)
 app.include_router(rag.router)
 app.include_router(logs.router)
+app.include_router(status.router)
 
 
 @app.get("/health")

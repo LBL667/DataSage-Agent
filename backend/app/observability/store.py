@@ -144,6 +144,51 @@ class EventStore:
         """审批记录单独视图，取 approval 非空的事件。"""
         return await self.query(approval=True, limit=limit)
 
+    async def node_stats(self, limit: int = 20) -> list[dict]:
+        """节点耗时统计，按最大耗时降序，识别慢节点。"""
+        if self._conn is None:
+            return []
+        sql = (
+            "SELECT node, COUNT(*) AS calls, AVG(duration_ms) AS avg_ms, MAX(duration_ms) AS max_ms "
+            "FROM events WHERE event = 'node_end' AND duration_ms IS NOT NULL "
+            "GROUP BY node ORDER BY max_ms DESC LIMIT ?"
+        )
+        async with self._lock:
+            cur = await self._conn.execute(sql, (limit,))
+            rows = await cur.fetchall()
+        return [
+            {
+                "node": r[0],
+                "calls": r[1],
+                "avg_ms": round(r[2], 1) if r[2] is not None else None,
+                "max_ms": round(r[3], 1) if r[3] is not None else None,
+            }
+            for r in rows
+        ]
+
+    async def error_stats(self) -> list[dict]:
+        """错误事件按节点分类统计。"""
+        if self._conn is None:
+            return []
+        sql = "SELECT node, COUNT(*) AS errors FROM events WHERE status = 'error' GROUP BY node ORDER BY errors DESC"
+        async with self._lock:
+            cur = await self._conn.execute(sql)
+            rows = await cur.fetchall()
+        return [{"node": r[0], "errors": r[1]} for r in rows]
+
+    async def total_stats(self) -> dict:
+        """总览统计，事件数与错误数。"""
+        if self._conn is None:
+            return {"events": 0, "errors": 0, "sessions": 0}
+        async with self._lock:
+            cur = await self._conn.execute("SELECT COUNT(*) FROM events")
+            total = (await cur.fetchone())[0]
+            cur = await self._conn.execute("SELECT COUNT(*) FROM events WHERE status = 'error'")
+            errors = (await cur.fetchone())[0]
+            cur = await self._conn.execute("SELECT COUNT(DISTINCT session_id) FROM events WHERE session_id != ''")
+            sessions = (await cur.fetchone())[0]
+        return {"events": total, "errors": errors, "sessions": sessions}
+
     @staticmethod
     def _row_to_event(cols: list[str], row: tuple) -> dict:
         d = dict(zip(cols, row))
