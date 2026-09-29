@@ -19,6 +19,7 @@ from app.llm import get_llm, get_structured_llm
 from app.middleware.node_wrapper import node
 from app.storage.dashboard_store import DashboardStore
 from app.storage.result_store import ResultStore
+from app.tools.registrar import get_registry
 
 _store = ResultStore(DATA_DIR / "results")
 
@@ -61,17 +62,15 @@ async def chart_advise(state: AnalysisState) -> dict:
 
 @node("chart_validate")
 async def chart_validate(state: AnalysisState) -> dict:
-    """校验字段名是否存在于结果列，对不上回炉。"""
-    from app.tools.chart_tool import validate_chart
-
+    """校验字段名是否存在于结果列，对不上回炉。走 MCP 通道。"""
     columns = await asyncio.to_thread(_result_columns, state)
-    ok, errors, _ = validate_chart(state.get("chart_spec") or {}, columns)
-    if ok:
+    result = await get_registry().call("chart_validate", chart_spec=state.get("chart_spec") or {}, columns=columns)
+    if result["ok"]:
         return {"chart_validate_passed": True}
     return {
         "chart_validate_passed": False,
         "retry_count": int(state.get("retry_count", 0)) + 1,
-        "errors": list(state.get("errors", [])) + [f"图表字段不匹配: {errors}"],
+        "errors": list(state.get("errors", [])) + [f"图表字段不匹配: {result['errors']}"],
     }
 
 
