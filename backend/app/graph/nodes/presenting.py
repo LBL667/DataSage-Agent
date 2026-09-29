@@ -85,26 +85,46 @@ async def human_chart_approve(state: AnalysisState) -> dict:
 
 @node("respond")
 async def respond(state: AnalysisState) -> dict:
-    """文字洞察。chat 类简单答复，分析类基于分析结果并落盘仪表盘结果。"""
-    llm = get_llm(temperature=0.5)
+    """文字洞察。缓存命中回放，分析类基于分析结果并落盘，chat 类简单答复。"""
+    from app.rag import cache
+
     analysis = state.get("analysis_output") or {}
+
+    # 缓存命中，直接回放
+    if state.get("rag_cache_hit") and analysis.get("text"):
+        return {"analysis_output": analysis}
+
+    llm = get_llm(temperature=0.5)
     if analysis.get("data"):
         result = await llm.ainvoke(
             [HumanMessage(content=f"根据分析结果生成一段简洁洞察，避免套话：{analysis}")]
         )
         text = result.content
         store = DashboardStore(DATA_DIR / "dashboard")
+        result_ref = state.get("cleaned_ref") or state.get("result_ref")
         rid = store.save(
             {
                 "title": state.get("user_goal", "")[:50],
                 "thread_id": state.get("session_id", ""),
-                "result_ref": state.get("cleaned_ref") or state.get("result_ref"),
+                "result_ref": result_ref,
                 "chart_spec": state.get("chart_spec"),
                 "chart_approved": state.get("chart_approved"),
                 "analysis_output": analysis,
                 "clean_rules_applied": state.get("clean_rules_applied", []),
                 "text": text,
             }
+        )
+        # 写语义缓存，key 含权限指纹
+        await cache.store(
+            state["user_goal"],
+            state.get("time_window"),
+            state.get("user_id", ""),
+            {
+                "result_ref": result_ref,
+                "analysis_output": {**analysis, "text": text},
+                "chart_spec": state.get("chart_spec"),
+                "result_meta": state.get("result_meta"),
+            },
         )
         return {"analysis_output": {**analysis, "text": text, "result_id": rid}}
     result = await llm.ainvoke([HumanMessage(content=state["user_goal"])])

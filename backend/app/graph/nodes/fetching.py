@@ -67,7 +67,12 @@ async def sql_generate(state: AnalysisState) -> dict:
     """生成 SQL 与用途说明，累计 token 到 state。支持错误回灌与澄清补充。"""
     structured = get_structured_llm(SqlOutput)
 
-    schema_text = await introspect_schema() or DEMO_SCHEMA
+    # 优先用检索到的 schema 上下文，落空则回退全量内省
+    schema_context = state.get("schema_context", [])
+    if schema_context:
+        schema_text = "\n\n".join(schema_context)
+    else:
+        schema_text = await introspect_schema() or DEMO_SCHEMA
     messages = [
         SystemMessage(content=SQL_SYSTEM_PROMPT),
         SystemMessage(content=f"可用表结构：\n{schema_text}"),

@@ -23,25 +23,25 @@ DROP TABLE IF EXISTS channels;
 
 CREATE_SQL = """
 CREATE TABLE channels (
-    channel_id INT PRIMARY KEY,
-    channel_name VARCHAR(50) NOT NULL
-);
+    channel_id INT PRIMARY KEY COMMENT '渠道 id',
+    channel_name VARCHAR(50) NOT NULL COMMENT '渠道名'
+) COMMENT='渠道表';
 
 CREATE TABLE orders (
-    order_id INT PRIMARY KEY,
-    user_id INT NOT NULL,
-    channel VARCHAR(50) NOT NULL,
-    amount DECIMAL(10,2) NOT NULL,
-    created_at DATE NOT NULL
-);
+    order_id INT PRIMARY KEY COMMENT '订单号',
+    user_id INT NOT NULL COMMENT '用户 id',
+    channel VARCHAR(50) NOT NULL COMMENT '渠道',
+    amount DECIMAL(10,2) NOT NULL COMMENT '金额',
+    created_at DATE NOT NULL COMMENT '下单时间'
+) COMMENT='订单表';
 
 CREATE TABLE order_items (
-    item_id INT PRIMARY KEY,
-    order_id INT NOT NULL,
-    product_id INT NOT NULL,
-    quantity INT NOT NULL,
-    price DECIMAL(10,2) NOT NULL
-);
+    item_id INT PRIMARY KEY COMMENT '明细 id',
+    order_id INT NOT NULL COMMENT '所属订单',
+    product_id INT NOT NULL COMMENT '商品 id',
+    quantity INT NOT NULL COMMENT '数量',
+    price DECIMAL(10,2) NOT NULL COMMENT '单价'
+) COMMENT='订单明细';
 """
 
 # channels 3 条
