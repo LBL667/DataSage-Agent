@@ -1,69 +1,116 @@
 import { useEffect, useState } from 'react'
 import * as echarts from 'echarts'
 import EChart from '../components/EChart'
-import { getDashboardResults, getDashboardData } from '../api/client'
+import { getDashboardResults, getDashboardData, clearDashboard } from '../api/client'
 
 interface Result {
   result_id: string
   title: string
   created_at: string
   result_ref?: string
-  chart_spec?: { chart_type: string; x_field: string; y_field: string; series?: string; title?: string }
+  chart_spec?: { chart_type: string; x_field: string; y_field: string; series?: string; title?: string; description?: string }
   text?: string
 }
+
+const ACCENT = 'oklch(44% 0.12 258)'
 
 export default function DashboardPanel() {
   const [results, setResults] = useState<Result[]>([])
   const [selected, setSelected] = useState<Result | null>(null)
   const [data, setData] = useState<{ columns: string[]; rows: unknown[][] } | null>(null)
 
+  function refresh() {
+    getDashboardResults().then((r) => {
+      const list = (r.results as Result[]) || []
+      setResults(list)
+      if (!list.length) setSelected(null)
+    })
+  }
+
   useEffect(() => {
-    getDashboardResults().then((r) => setResults((r.results as Result[]) || []))
+    refresh()
   }, [])
 
   useEffect(() => {
-    if (!selected?.result_ref) return
+    if (!selected?.result_ref) {
+      setData(null)
+      return
+    }
     getDashboardData(selected.result_ref).then((d) => setData({ columns: d.columns, rows: d.rows }))
   }, [selected])
 
-  function chartOption(res: Result): echarts.EChartsOption | null {
-    const spec = res.chart_spec
-    if (!spec || !data) return null
-    const xIdx = data.columns.indexOf(spec.x_field)
-    const yIdx = data.columns.indexOf(spec.y_field)
-    if (xIdx < 0 || yIdx < 0) return null
-    const x = data.rows.map((r) => String(r[xIdx]))
-    const y = data.rows.map((r) => Number(r[yIdx]))
+  async function onClear() {
+    if (!confirm('确认清空所有分析结果？')) return
+    await clearDashboard()
+    refresh()
+  }
+
+  function chartOptions(): { title: string; option: echarts.EChartsOption }[] {
+    if (!data || data.rows.length === 0) return []
+    const spec = selected?.chart_spec
+    const xIdx = spec ? data.columns.indexOf(spec.x_field) : 0
+    const categoryCol = xIdx >= 0 ? xIdx : 0
+    const x = data.rows.map((r) => String(r[categoryCol]))
+
+    const numericCols = data.columns
+      .map((c, i) => ({ name: c, idx: i }))
+      .filter(({ idx }) => data.rows.every((r) => typeof r[idx] === 'number'))
+
+    const charts: { title: string; option: echarts.EChartsOption }[] = []
     const base = {
       grid: { left: 48, right: 24, top: 40, bottom: 40 },
-      xAxis: { type: 'category', data: x, axisLine: { lineStyle: { color: 'var(--border)' } } },
+      xAxis: { type: 'category', data: x, axisLabel: { interval: 0, rotate: 30 } },
       yAxis: { type: 'value', splitLine: { lineStyle: { color: 'var(--border)' } } },
       tooltip: { trigger: 'axis' },
-    }
-    if (spec.chart_type === 'bar') {
-      return {
-        ...base,
-        series: [{ type: 'bar', data: y, itemStyle: { color: 'oklch(44% 0.12 258)' } }],
-      } as unknown as echarts.EChartsOption
-    }
-    if (spec.chart_type === 'pie') {
-      return {
-        tooltip: { trigger: 'item' },
-        series: [{ type: 'pie', radius: '60%', data: x.map((name, i) => ({ name, value: y[i] })) }],
-      } as unknown as echarts.EChartsOption
-    }
-    return {
-      ...base,
-      series: [{ type: 'line', data: y, smooth: true, lineStyle: { color: 'oklch(44% 0.12 258)' }, itemStyle: { color: 'oklch(44% 0.12 258)' } }],
     } as unknown as echarts.EChartsOption
+
+    // 主图表：按 chart_spec 类型
+    if (spec && spec.y_field) {
+      const yIdx = data.columns.indexOf(spec.y_field)
+      const y = data.rows.map((r) => Number(r[yIdx]))
+      const label = spec.description || `${spec.y_field} 按 ${spec.x_field}`
+      if (spec.chart_type === 'pie') {
+        charts.push({
+          title: label,
+          option: { tooltip: { trigger: 'item' }, series: [{ type: 'pie', radius: '60%', data: x.map((name, i) => ({ name, value: y[i] })) }] } as unknown as echarts.EChartsOption,
+        })
+      } else {
+        const kind = spec.chart_type === 'line' ? 'line' : 'bar'
+        charts.push({
+          title: label,
+          option: { ...base, series: [{ type: kind, data: y, smooth: kind === 'line', itemStyle: { color: ACCENT }, lineStyle: { color: ACCENT } }] } as unknown as echarts.EChartsOption,
+        })
+      }
+    }
+
+    // 补充图表：其余数值列各出一个柱状图，实现多维度
+    const usedY = spec?.y_field
+    numericCols
+      .filter((c) => c.name !== usedY)
+      .slice(0, 4)
+      .forEach((c) => {
+        const y = data.rows.map((r) => Number(r[c.idx]))
+        charts.push({
+          title: `${c.name} 按 ${data.columns[categoryCol]}`,
+          option: { ...base, series: [{ type: 'bar', data: y, itemStyle: { color: 'oklch(60% 0.1 258)' } }] } as unknown as echarts.EChartsOption,
+        })
+      })
+
+    return charts
   }
 
   return (
     <div style={{ display: 'flex', gap: 20, height: '100%' }}>
-      {/* 结果列表 */}
       <div style={{ width: 300, flexShrink: 0, overflow: 'auto' }}>
-        <h2 style={{ marginBottom: 16 }}>分析结果</h2>
-        {results.length === 0 && <Empty text="还没有分析结果，去对话面板问一句" />}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h2>分析结果</h2>
+          {results.length > 0 && (
+            <button className="btn btn-ghost" style={{ height: 30, padding: '0 10px' }} onClick={onClear}>
+              清空
+            </button>
+          )}
+        </div>
+        {results.length === 0 && <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)', fontSize: 14 }}>待生成</div>}
         {results.map((r) => (
           <button
             key={r.result_id}
@@ -87,20 +134,22 @@ export default function DashboardPanel() {
         ))}
       </div>
 
-      {/* 详情 */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {!selected && <Empty text="选择左侧结果查看图表" />}
+      <div style={{ flex: 1, minWidth: 0, overflow: 'auto' }}>
+        {!selected && <div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)', fontSize: 14 }}>待生成</div>}
         {selected && (
           <div className="fade-up">
             <h2 style={{ marginBottom: 8 }}>{selected.title || '分析结果'}</h2>
             {selected.text && (
-              <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 20, maxWidth: '65ch' }}>
-                {selected.text}
-              </p>
+              <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 20, maxWidth: '65ch' }}>{selected.text}</p>
             )}
-            {chartOption(selected) && <EChart option={chartOption(selected)!} />}
+            {chartOptions().map((c, i) => (
+              <div key={i} className="card" style={{ padding: 16, marginBottom: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{c.title}</div>
+                <EChart option={c.option} height={280} />
+              </div>
+            ))}
             {data && (
-              <div className="card" style={{ padding: 16, marginTop: 20, overflow: 'auto' }}>
+              <div className="card" style={{ padding: 16, overflow: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr>
@@ -129,11 +178,5 @@ export default function DashboardPanel() {
         )}
       </div>
     </div>
-  )
-}
-
-function Empty({ text }: { text: string }) {
-  return (
-    <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)', fontSize: 14 }}>{text}</div>
   )
 }

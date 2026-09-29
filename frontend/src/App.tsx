@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import LoginPage from './auth/LoginPage'
 import ForgotPage from './auth/ForgotPage'
+import RegisterPage from './auth/RegisterPage'
 import AppShell from './layout/AppShell'
 
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -16,6 +17,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/forgot" element={<ForgotPage />} />
+      <Route path="/register" element={<RegisterPage />} />
       <Route
         path="/*"
         element={

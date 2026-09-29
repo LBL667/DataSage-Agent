@@ -15,7 +15,7 @@ export default function UserMenu({ user, onLogout }: { user: User; onLogout: () 
     return () => document.removeEventListener('mousedown', onClick)
   }, [])
 
-  const initial = (user.nickname || user.username || 'U').slice(0, 1).toUpperCase()
+  const initial = (user.username || 'U').slice(0, 1).toUpperCase()
 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
@@ -38,7 +38,7 @@ export default function UserMenu({ user, onLogout }: { user: User; onLogout: () 
           {user.avatar ? <img src={user.avatar} alt="" /> : initial}
         </span>
         <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>
-          {user.nickname || user.username}
+          {user.username}
         </span>
       </button>
 
@@ -61,7 +61,7 @@ export default function UserMenu({ user, onLogout }: { user: User; onLogout: () 
           <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
             <div style={{ fontSize: 14, fontWeight: 600 }}>{user.nickname || user.username}</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-              {user.email || user.username}
+              {user.username}
             </div>
           </div>
           <button

@@ -97,7 +97,10 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <div style={{ marginTop: 24, textAlign: 'center', fontSize: 14 }}>
+        <div style={{ marginTop: 24, textAlign: 'center', fontSize: 14, display: 'flex', justifyContent: 'space-between' }}>
+          <Link to="/register" style={{ color: 'var(--text-muted)' }}>
+            注册账号
+          </Link>
           <Link to="/forgot" style={{ color: 'var(--text-muted)' }}>
             忘记密码？
           </Link>

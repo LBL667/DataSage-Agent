@@ -1,11 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { startChat, resumeChat, type SSEEvent } from '../api/client'
-
-interface Msg {
-  role: 'user' | 'assistant'
-  content: string
-  sql?: string
-}
+import { loadCurrent, saveCurrent, type ChatMsg } from '../store/session'
 
 interface Approval {
   node: string
@@ -29,8 +24,16 @@ const NODE_LABEL: Record<string, string> = {
   respond: '生成洞察',
 }
 
+const CHART_TYPE_LABEL: Record<string, string> = {
+  line: '折线图',
+  bar: '柱状图',
+  scatter: '散点图',
+  pie: '饼图',
+  table: '表格',
+}
+
 export default function ChatPanel() {
-  const [messages, setMessages] = useState<Msg[]>([])
+  const [session, setSession] = useState(() => loadCurrent())
   const [input, setInput] = useState('')
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState('')
@@ -42,7 +45,15 @@ export default function ChatPanel() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, progress])
+  }, [session.messages, progress])
+
+  function update(messages: ChatMsg[]) {
+    setSession((prev) => {
+      const next = { ...prev, messages }
+      saveCurrent(next)
+      return next
+    })
+  }
 
   function handleEvent(ev: SSEEvent) {
     if (ev.session_id) threadRef.current = ev.session_id
@@ -55,7 +66,7 @@ export default function ChatPanel() {
       setRunning(false)
     } else if (ev.event === 'final') {
       const text = (ev.target as { text?: string } | undefined)?.text || ''
-      setMessages((prev) => [...prev, { role: 'assistant', content: text }])
+      update([...session.messages, { role: 'assistant', content: text }])
       setRunning(false)
       setProgress('')
     } else if (ev.event === 'error') {
@@ -68,7 +79,17 @@ export default function ChatPanel() {
     const text = input.trim()
     if (!text || running) return
     setInput('')
-    setMessages((prev) => [...prev, { role: 'user', content: text }])
+    const messages = [...session.messages, { role: 'user' as const, content: text }]
+    update(messages)
+    // 首次发送用输入作为标题
+    if (session.title === '新会话' && session.messages.length === 0) {
+      const title = text.slice(0, 16)
+      setSession((prev) => {
+        const next = { ...prev, title }
+        saveCurrent(next)
+        return next
+      })
+    }
     setRunning(true)
     await startChat(text, handleEvent)
   }
@@ -86,30 +107,40 @@ export default function ChatPanel() {
     }
   }
 
+  function compactMemory() {
+    const msgs = session.messages
+    if (msgs.length <= 6) return
+    const kept = msgs.slice(-4)
+    const removed = msgs.length - kept.length
+    update([{ role: 'assistant', content: `（已压缩更早的 ${removed} 条消息，保留最近上下文）` }, ...kept])
+  }
+
   const approvalTarget = approval?.target as {
     sql?: string
     explain?: string
     reasons?: string[]
     questions?: string[]
-    chart_spec?: Record<string, unknown>
+    chart_spec?: { chart_type?: string; description?: string; title?: string }
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', maxWidth: 820, margin: '0 auto' }}>
-      {/* 消息区 */}
       <div style={{ flex: 1, overflow: 'auto', paddingBottom: 16 }}>
-        {messages.length === 0 && !running && (
+        {session.messages.length > 6 && (
+          <div style={{ textAlign: 'right', marginBottom: 8 }}>
+            <button className="btn btn-ghost" style={{ height: 28, padding: '0 10px', fontSize: 12 }} onClick={compactMemory}>
+              压缩记忆
+            </button>
+          </div>
+        )}
+        {session.messages.length === 0 && !running && (
           <div style={{ textAlign: 'center', paddingTop: 80, color: 'var(--text-muted)' }}>
-            <div style={{ fontSize: 22, fontWeight: 600, color: 'var(--text)' }}>
-              想问什么数据？
-            </div>
-            <div style={{ marginTop: 8, fontSize: 14 }}>
-              例如「查一下各渠道的订单金额总和」
-            </div>
+            <div style={{ fontSize: 22, fontWeight: 600, color: 'var(--text)' }}>想问什么数据？</div>
+            <div style={{ marginTop: 8, fontSize: 14 }}>例如「查一下各渠道的订单金额总和」</div>
           </div>
         )}
 
-        {messages.map((m, i) => (
+        {session.messages.map((m, i) => (
           <div
             key={i}
             className="fade-up"
@@ -132,7 +163,6 @@ export default function ChatPanel() {
               }}
             >
               {m.content}
-              {m.sql && <div className="code" style={{ marginTop: 10, background: 'transparent', border: 'none', padding: 0 }}>{m.sql}</div>}
             </div>
           </div>
         ))}
@@ -147,15 +177,7 @@ export default function ChatPanel() {
         <div ref={bottomRef} />
       </div>
 
-      {/* 输入区 */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 10,
-          paddingTop: 16,
-          borderTop: '1px solid var(--border)',
-        }}
-      >
+      <div style={{ display: 'flex', gap: 10, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
         <input
           className="input"
           value={input}
@@ -169,7 +191,6 @@ export default function ChatPanel() {
         </button>
       </div>
 
-      {/* 审批弹窗 */}
       {approval && (
         <div
           style={{
@@ -202,9 +223,7 @@ export default function ChatPanel() {
                 <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16 }}>
                   以下 SQL 需要你确认后才会执行
                 </p>
-                {approvalTarget?.explain && (
-                  <p style={{ fontSize: 14, marginBottom: 12 }}>{approvalTarget.explain}</p>
-                )}
+                {approvalTarget?.explain && <p style={{ fontSize: 14, marginBottom: 12 }}>{approvalTarget.explain}</p>}
                 <div className="code">{approvalTarget?.sql}</div>
                 {approvalTarget?.reasons && approvalTarget.reasons.length > 0 && (
                   <div style={{ marginTop: 12, fontSize: 13, color: 'var(--warning)' }}>
@@ -219,15 +238,9 @@ export default function ChatPanel() {
                   placeholder="修改意见（选填）"
                 />
                 <div style={{ display: 'flex', gap: 10, marginTop: 16, justifyContent: 'flex-end' }}>
-                  <button className="btn btn-ghost" onClick={() => onApproval('cancel')}>
-                    取消
-                  </button>
-                  <button className="btn btn-danger" onClick={() => onApproval('edit', editComment)}>
-                    修改
-                  </button>
-                  <button className="btn btn-primary" onClick={() => onApproval('approve')}>
-                    同意执行
-                  </button>
+                  <button className="btn btn-ghost" onClick={() => onApproval('cancel')}>取消</button>
+                  <button className="btn btn-danger" onClick={() => onApproval('edit', editComment)}>修改</button>
+                  <button className="btn btn-primary" onClick={() => onApproval('approve')}>同意执行</button>
                 </div>
               </>
             )}
@@ -235,17 +248,17 @@ export default function ChatPanel() {
             {approval.node === 'human_chart_approve' && (
               <>
                 <h3 style={{ marginBottom: 4 }}>图表确认</h3>
-                <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16 }}>
-                  确认使用以下图表规格渲染
+                <p style={{ fontSize: 14, marginBottom: 16, color: 'var(--text)' }}>
+                  {approvalTarget?.chart_spec?.description || '建议用图表展示分析结果'}
                 </p>
-                <div className="code">{JSON.stringify(approvalTarget?.chart_spec, null, 2)}</div>
-                <div style={{ display: 'flex', gap: 10, marginTop: 16, justifyContent: 'flex-end' }}>
-                  <button className="btn btn-ghost" onClick={() => onApproval('reject')}>
-                    只看文字
-                  </button>
-                  <button className="btn btn-primary" onClick={() => onApproval('approve')}>
-                    确认图表
-                  </button>
+                {approvalTarget?.chart_spec?.chart_type && (
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16 }}>
+                    图表类型：{CHART_TYPE_LABEL[approvalTarget.chart_spec.chart_type] || approvalTarget.chart_spec.chart_type}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 10, marginTop: 8, justifyContent: 'flex-end' }}>
+                  <button className="btn btn-ghost" onClick={() => onApproval('reject')}>只看文字</button>
+                  <button className="btn btn-primary" onClick={() => onApproval('approve')}>确认图表</button>
                 </div>
               </>
             )}
@@ -253,13 +266,9 @@ export default function ChatPanel() {
             {approval.node === 'clarify' && (
               <>
                 <h3 style={{ marginBottom: 4 }}>需要补充</h3>
-                <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16 }}>
-                  为了准确回答，请补充以下信息
-                </p>
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16 }}>为了准确回答，请补充以下信息</p>
                 {(approvalTarget?.questions || []).map((q, i) => (
-                  <p key={i} style={{ fontSize: 14, marginBottom: 8 }}>
-                    · {q}
-                  </p>
+                  <p key={i} style={{ fontSize: 14, marginBottom: 8 }}>· {q}</p>
                 ))}
                 <input
                   className="input"
@@ -269,9 +278,7 @@ export default function ChatPanel() {
                   placeholder="补充说明…"
                 />
                 <div style={{ display: 'flex', gap: 10, marginTop: 16, justifyContent: 'flex-end' }}>
-                  <button className="btn btn-primary" onClick={() => onApproval('approve')}>
-                    提交
-                  </button>
+                  <button className="btn btn-primary" onClick={() => onApproval('approve')}>提交</button>
                 </div>
               </>
             )}

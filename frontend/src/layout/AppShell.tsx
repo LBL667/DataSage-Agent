@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Routes, Route, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import type { User } from '../api/client'
+import { loadSessions, newSession, switchSession, deleteSession, type Session } from '../store/session'
 import UserMenu from './UserMenu'
 import ChatPanel from '../panels/ChatPanel'
 import ConfigPanel from '../panels/ConfigPanel'
@@ -25,10 +26,34 @@ export default function AppShell() {
   const user = JSON.parse(localStorage.getItem('datasage_user') || '{}') as User
   const navigate = useNavigate()
   const location = useLocation()
+  const [sessions, setSessions] = useState<Session[]>(() => loadSessions())
+  const [version, setVersion] = useState(0)
+
+  function refresh() {
+    setSessions(loadSessions())
+    setVersion((v) => v + 1)
+  }
 
   function logout() {
     localStorage.removeItem('datasage_user')
     navigate('/login')
+  }
+
+  function onNewSession() {
+    newSession()
+    refresh()
+    navigate('/chat')
+  }
+
+  function onSwitch(id: string) {
+    switchSession(id)
+    refresh()
+    navigate('/chat')
+  }
+
+  function onDelete(id: string) {
+    deleteSession(id)
+    refresh()
   }
 
   return (
@@ -36,13 +61,14 @@ export default function AppShell() {
       {/* 侧边栏 */}
       <aside
         style={{
-          width: 220,
+          width: 240,
           flexShrink: 0,
           borderRight: '1px solid var(--border)',
           background: 'var(--surface)',
           display: 'flex',
           flexDirection: 'column',
           padding: '20px 12px',
+          overflow: 'hidden',
         }}
       >
         <div
@@ -50,14 +76,18 @@ export default function AppShell() {
             fontSize: 20,
             fontWeight: 700,
             letterSpacing: '-0.02em',
-            padding: '4px 12px 24px',
+            padding: '4px 12px 12px',
             color: 'var(--text)',
           }}
         >
           DataSage
         </div>
 
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <button className="btn btn-primary" onClick={onNewSession} style={{ margin: '0 8px 16px' }}>
+          + 新建会话
+        </button>
+
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 }}>
           {NAV.map((item) => (
             <NavLink
               key={item.path}
@@ -80,6 +110,59 @@ export default function AppShell() {
             </NavLink>
           ))}
         </nav>
+
+        {/* 历史会话 */}
+        <div
+          style={{
+            marginTop: 16,
+            fontSize: 12,
+            fontWeight: 600,
+            color: 'var(--text-muted)',
+            padding: '0 12px 8px',
+            flexShrink: 0,
+          }}
+        >
+          历史会话
+        </div>
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          {sessions.map((s) => (
+            <div
+              key={s.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                padding: '6px 12px',
+                borderRadius: 'var(--radius-sm)',
+                cursor: 'pointer',
+                fontSize: 13,
+                color: 'var(--text-secondary)',
+                transition: 'background 0.15s var(--ease-out)',
+              }}
+              onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'var(--surface-2)')}
+              onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
+              onClick={() => onSwitch(s.id)}
+            >
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {s.title}
+              </span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDelete(s.id)
+                }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  fontSize: 14,
+                  padding: '0 2px',
+                }}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
       </aside>
 
       {/* 主区 */}

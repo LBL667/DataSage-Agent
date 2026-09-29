@@ -29,6 +29,20 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T
 }
 
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return (await res.json()) as T
+}
+
+async function del<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { method: 'DELETE' })
+  return (await res.json()) as T
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`)
   return (await res.json()) as T
@@ -36,6 +50,10 @@ async function get<T>(path: string): Promise<T> {
 
 export async function login(username: string, password: string): Promise<{ ok: boolean; user?: User; message?: string }> {
   return post('/auth/login', { username, password })
+}
+
+export async function register(username: string, password: string, nickname = ''): Promise<{ ok: boolean; user?: User; message?: string }> {
+  return post('/auth/register', { username, password, nickname })
 }
 
 export async function resetPassword(username: string, newPassword: string): Promise<{ ok: boolean; message?: string }> {
@@ -133,10 +151,38 @@ export function getDbStatus(): Promise<Record<string, unknown>> {
   return get('/config/db')
 }
 
+export function putDb(db: { host: string; port: number; user: string; password: string; database: string }): Promise<{ ok: boolean }> {
+  return put('/config/db', db)
+}
+
+export function putWhitelist(tables: string[]): Promise<{ tables: string[] }> {
+  return put('/config/whitelist', { tables })
+}
+
+export function putBlacklist(data: { columns: string[]; statements: string[] }): Promise<{ columns: string[]; statements: string[] }> {
+  return put('/config/blacklist', { columns: data.columns, statements: data.statements, column_patterns: [] })
+}
+
+export function putCleanRules(rules: Record<string, unknown>[]): Promise<{ rules: Record<string, unknown>[] }> {
+  return put('/config/clean-rules', { rules })
+}
+
+export function clearDashboard(): Promise<{ ok: boolean; deleted: number }> {
+  return del('/dashboard/results')
+}
+
 export function getRagDocuments(): Promise<{ documents: Record<string, unknown>[] }> {
   return get('/rag/documents')
 }
 
 export function ragSearch(query: string, collection: string, topK = 10): Promise<{ chunks: Record<string, unknown>[] }> {
   return post('/rag/search', { query, collection, top_k: topK })
+}
+
+export async function uploadDocument(file: File, collection: string): Promise<{ name: string; chunks: number }> {
+  const fd = new FormData()
+  fd.append('file', file)
+  fd.append('collection', collection)
+  const res = await fetch(`${BASE}/rag/documents`, { method: 'POST', body: fd })
+  return (await res.json()) as { name: string; chunks: number }
 }
