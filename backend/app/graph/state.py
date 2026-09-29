@@ -61,6 +61,7 @@ class AnalysisState(TypedDict):
 
     # 可视化
     chart_spec: dict | None
+    chart_validate_passed: bool | None
     chart_approved: bool | None
 
     # 异常与预算

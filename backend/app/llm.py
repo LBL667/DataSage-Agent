@@ -27,3 +27,13 @@ def get_llm(temperature: float = 0.0) -> ChatOpenAI:
         base_url=s.llm_base_url or None,
         temperature=temperature,
     )
+
+
+def get_structured_llm(schema, temperature: float = 0.0):
+    """返回带结构化输出约束的 runnable。
+
+    用 function_calling 而非 json_schema。deepseek-flash 等 thinking 模式模型
+    既不支持 response_format 也不支持 tool_choice，需用 deepseek-chat。
+    """
+    llm = get_llm(temperature=temperature)
+    return llm.with_structured_output(schema, method="function_calling")
