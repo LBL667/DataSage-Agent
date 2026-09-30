@@ -37,3 +37,8 @@ class DistributionParams(BaseModel):
 class CorrelationParams(BaseModel):
     x: str
     y: str
+
+
+class EnumerateParams(BaseModel):
+    column: str
+    top: int = Field(default=20, ge=1, le=100)

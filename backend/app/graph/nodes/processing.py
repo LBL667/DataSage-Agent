@@ -27,6 +27,7 @@ class OperatorCall(BaseModel):
 ANALYZE_SYSTEM_PROMPT = """你是数据分析算子编排器。根据用户诉求与结果列名，选一个算子并给出参数。
 
 可用算子：
+- enumerate：枚举某列的唯一取值与计数，参数 column。适合「有哪些类别」「列出 XX」这类查询，或结果只有一列文本分类时
 - period_compare：周期对比，参数 metric、period(mom 或 yoy)、group_by、time_column
 - top_n：前 N，参数 metric、n、group_by、order(desc 或 asc)
 - attribution：归因，参数 metric、group_by
@@ -37,6 +38,7 @@ ANALYZE_SYSTEM_PROMPT = """你是数据分析算子编排器。根据用户诉�
 1. 只从这些算子里选
 2. metric、x、y、time_column 必须是结果列里的列名
 3. group_by 是字符串数组，例如 ["channel"]，即使只有一个分组列也要用数组
+4. 结果只有文本分类列、用户想看有哪些取值时，用 enumerate 而不是 distribution
 """
 
 
@@ -109,4 +111,8 @@ async def self_check(state: AnalysisState) -> dict:
     if output.get("data") is None:
         passed = False
         notes.append("算子无有效输出")
-    return {"self_check_passed": passed, "self_check_notes": notes}
+    result: dict = {"self_check_passed": passed, "self_check_notes": notes}
+    if not passed:
+        # 自检不通过，递增重试计数，避免无限回退
+        result["sql_retry_count"] = int(state.get("sql_retry_count", 0)) + 1
+    return result
